@@ -202,19 +202,32 @@ def get_hs_stock_symbols() -> list:
         -------
             {600000.ss, 600001.ss, 600002.ss, 600003.ss, ...}
         """
-        url = "http://99.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=10000&po=1&np=1&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f12"
-        try:
-            resp = requests.get(url, timeout=None)
-            resp.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            raise requests.exceptions.HTTPError(f"Request to {url} failed with status code {resp.status_code}") from e
+        pz = 200
+        def get_by_page(pn:int, pz:int):
+            url = "http://99.push2.eastmoney.com/api/qt/clist/get?pn={pn}&pz={pz}&po=1&np=1&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f12"
+            url = url.replace("{pn}", str(pn))
+            url = url.replace("{pz}", str(pz))
+            try:
+                resp = requests.get(url, timeout=None)
+            except requests.exceptions.HTTPError as e:
+                raise requests.exceptions.HTTPError(f"Request to {url} failed with status code {resp.status_code}") from e
+            return resp
 
-        try:
-            _symbols = [_v["f12"] for _v in resp.json()["data"]["diff"]]
-        except Exception as e:
-            logger.warning("An error occurred while extracting data from the response.")
-            raise
-
+        _symbols = []
+        resp = get_by_page(1, pz)
+        total = resp.json()["data"]["total"]
+        #print(f"total: {total}")
+        div, mod = divmod(total, pz)
+        pages = div + 1 if mod else div
+        #print(f"pages: {pages}")
+        for page in range(1, pages + 1):
+            resp = get_by_page(page, pz)
+            try:
+                _symbols.extend([_v["f12"] for _v in resp.json()["data"]["diff"]])
+            except Exception as e:
+                logger.warning(f"request error: {e}")
+                raise
+        #print(f"_symbols: {len(_symbols)}")
         if len(_symbols) < 3900:
             raise ValueError("The complete list of stocks is not available.")
 
@@ -223,7 +236,11 @@ def get_hs_stock_symbols() -> list:
             _symbol + ".ss" if _symbol.startswith("6") else _symbol + ".sz" if _symbol.startswith(("0", "3")) else None
             for _symbol in _symbols
         ]
+        #print(f"after _symbols: {len(_symbols)}")
         _symbols = [_symbol for _symbol in _symbols if _symbol is not None]
+        #print(f"after _symbols: {_symbols}")
+
+        #print(f"after set _symbols: {set(_symbols)}")
 
         return set(_symbols)
 
@@ -260,16 +277,30 @@ def get_us_stock_symbols(qlib_data_path: [str, Path] = None) -> list:
 
     @deco_retry
     def _get_eastmoney():
-        url = "http://4.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=10000&fs=m:105,m:106,m:107&fields=f12"
-        resp = requests.get(url, timeout=None)
-        if resp.status_code != 200:
-            raise ValueError("request error")
+        pz = 200
+        def get_by_page(pn:int, pz:int):
+            url = "http://4.push2.eastmoney.com/api/qt/clist/get?pn={pn}&pz={pz}&fs=m:105,m:106,m:107&fields=f12"
+            url = url.replace("{pn}", str(pn))
+            url = url.replace("{pz}", str(pz))
+            resp = requests.get(url, timeout=None)
+            if resp.status_code != 200:
+                raise ValueError("request error")
+            return resp
 
-        try:
-            _symbols = [_v["f12"].replace("_", "-P") for _v in resp.json()["data"]["diff"].values()]
-        except Exception as e:
-            logger.warning(f"request error: {e}")
-            raise
+        _symbols = []
+        resp = get_by_page(1, pz)
+        total = resp.json()["data"]["total"]
+        #print(f"total: {total}")
+        div, mod = divmod(total, pz)
+        pages = div + 1 if mod else div
+        #print(f"pages: {pages}")
+        for page in range(1, pages + 1):
+            resp = get_by_page(page, pz)
+            try:
+                _symbols.extend([_v["f12"].replace("_", "-P") for _v in resp.json()["data"]["diff"].values()])
+            except Exception as e:
+                logger.warning(f"request error: {e}")
+                raise
 
         if len(_symbols) < 8000:
             raise ValueError("request error")
